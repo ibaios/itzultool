@@ -1,2 +1,5 @@
 # itzultool
-ItzulTool - AssetsTools.NET erabilita Unityko baliabideak aldatzeko tresnak
+
+![ItzulTool](https://github.com/[ibaios/itzultool/itzultool.png?raw=true)
+
+AssetsTools.NET erabilita Unityko baliabideak aldatzeko tresnak

@@ -19,8 +19,8 @@ namespace ItzulTool
             Console.WriteLine("Deskonprimatzeko: ItzulTool decompress <fitxategia> (deskonprimatutako fitxategiak jatorrizkoaren izen bera izango du, bukaeran '.decomp' luzapena gehituta)");
             Console.WriteLine("Konprimatzeko: ItzulTool compress <jatorriko fitxategia> <helburuko fitxategia>");
             Console.WriteLine("EMIPa aplikatzeko: ItzulTool applyemip <emip fitxategia> <direktorioa>");
-            Console.WriteLine("Bundle batetik assets fitxategi bat erauzteko: ItzulTool extractasset <bundlea> <asseta>");
-            Console.WriteLine("Bundle bateko assets fitxategi bat ordezkatzeko: ItzulTool replaceasset <bundlea> <asset berria>");
+            Console.WriteLine("Bundle batetik assets fitxategi bat erauzteko: ItzulTool extractassets <bundlea> <asseta>");
+            Console.WriteLine("Bundle bateko assets fitxategi bat ordezkatzeko: ItzulTool replaceassets <bundlea> <asset berria bide-izenarekin>");
             Console.WriteLine("");
         }
 

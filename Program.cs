@@ -51,6 +51,8 @@ namespace ItzulTool
 
                 bun = new AssetBundleFile();
                 bun.Read(r);
+            } else {
+                System.IO.File.Copy(file, decompFile);
             }
 
             return bun;

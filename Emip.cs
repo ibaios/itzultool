@@ -5,6 +5,23 @@ using AssetsTools.NET;
 
 namespace ItzulTool
 {
+    public class EmipAssetReplacer
+    {
+        public bool IsRemover;
+        public long PathId;
+        public int ClassId;
+        public ushort MonoScriptIndex;
+        public byte[] Data; // null if IsRemover
+    }
+
+    public class EmipBundleEntryReplacer
+    {
+        public string OldName;
+        public string NewName;
+        public bool HasSerializedData;
+        public List<EmipAssetReplacer> AssetReplacers;
+    }
+
     public class InstallerPackageFile
     {
         public string magic;
@@ -33,8 +50,6 @@ namespace ItzulTool
             {
                 addedTypes = new ClassDatabaseFile();
                 addedTypes.Read(reader);
-                ////get past the data since the reader goes back to the beginning
-                //reader.Position = 0x16 + addedTypes.Header.CompressedSize;
             }
             else
             {
@@ -45,178 +60,150 @@ namespace ItzulTool
             affectedFiles = new List<InstallerPackageAssetsDesc>();
             for (int i = 0; i < affectedFilesCount; i++)
             {
-                List<object> replacers = new List<object>();
                 InstallerPackageAssetsDesc desc = new InstallerPackageAssetsDesc()
                 {
                     isBundle = reader.ReadByte() != 0,
                     path = reader.ReadCountStringInt16()
                 };
                 int replacerCount = reader.ReadInt32();
-                for (int j = 0; j < replacerCount; j++)
+                if (desc.isBundle)
                 {
-                    object repObj = ParseReplacer(reader, prefReplacersInMemory);
-                    if (repObj is AssetsReplacer repAsset)
+                    desc.bundleReplacers = new List<EmipBundleEntryReplacer>();
+                    for (int j = 0; j < replacerCount; j++)
                     {
-                        replacers.Add(repAsset);
-                    }
-                    else if (repObj is BundleReplacer repBundle)
-                    {
-                        replacers.Add(repBundle);
+                        var rep = ParseBundleReplacer(reader, prefReplacersInMemory);
+                        if (rep != null)
+                            desc.bundleReplacers.Add(rep);
                     }
                 }
-                desc.replacers = replacers;
+                else
+                {
+                    desc.assetReplacers = new List<EmipAssetReplacer>();
+                    for (int j = 0; j < replacerCount; j++)
+                    {
+                        var rep = ParseAssetReplacer(reader, prefReplacersInMemory);
+                        if (rep != null)
+                            desc.assetReplacers.Add(rep);
+                    }
+                }
                 affectedFiles.Add(desc);
             }
 
             return true;
         }
+
         public void Write(AssetsFileWriter writer)
         {
-            writer.BigEndian = false;
-
-            writer.Write(Encoding.ASCII.GetBytes(magic));
-            
-            writer.Write(includesCldb);
-
-            writer.WriteCountStringInt16(modName);
-            writer.WriteCountStringInt16(modCreators);
-            writer.WriteCountStringInt16(modDescription);
-
-            if (includesCldb)
-            {
-                addedTypes.Write(writer, ClassFileCompressionType.Uncompressed);
-                //writer.Position = 0x16 + addedTypes.Header.CompressedSize;
-            }
-
-            writer.Write(affectedFiles.Count);
-            for (int i = 0; i < affectedFiles.Count; i++)
-            {
-                InstallerPackageAssetsDesc desc = affectedFiles[i];
-                writer.Write(desc.isBundle);
-                writer.WriteCountStringInt16(desc.path);
-                
-                writer.Write(desc.replacers.Count);
-                for (int j = 0; j < desc.replacers.Count; j++)
-                {
-                    object repObj = desc.replacers[j];
-                    if (repObj is AssetsReplacer repAsset)
-                    {
-                        repAsset.WriteReplacer(writer);
-                    }
-                    else if (repObj is BundleReplacer repBundle)
-                    {
-                        repBundle.WriteReplacer(writer);
-                    }
-                }
-            }
+            throw new NotImplementedException("EMIP write is not supported in this version.");
         }
 
-        private static object ParseReplacer(AssetsFileReader reader, bool prefReplacersInMemory)
+        private static EmipBundleEntryReplacer ParseBundleReplacer(AssetsFileReader reader, bool prefReplacersInMemory)
         {
             short replacerType = reader.ReadInt16();
             byte fileType = reader.ReadByte();
-            if (fileType == 0) //BundleReplacer
+            if (fileType != 0) //not a BundleReplacer
+                return null;
+
+            string oldName = reader.ReadCountStringInt16();
+            string newName = reader.ReadCountStringInt16();
+            bool hasSerializedData = reader.ReadByte() != 0;
+            long assetReplacerCount = reader.ReadInt64();
+
+            var assetReplacers = new List<EmipAssetReplacer>();
+            for (int i = 0; i < assetReplacerCount; i++)
             {
-                string oldName = reader.ReadCountStringInt16();
-                string newName = reader.ReadCountStringInt16();
-                bool hasSerializedData = reader.ReadByte() != 0; //guess
-                long replacerCount = reader.ReadInt64();
-                List<AssetsReplacer> replacers = new List<AssetsReplacer>();
-                for (int i = 0; i < replacerCount; i++)
-                {
-                    AssetsReplacer assetReplacer = (AssetsReplacer)ParseReplacer(reader, prefReplacersInMemory);
-                    replacers.Add(assetReplacer);
-                }
-
-                if (replacerType == 4) //BundleReplacerFromAssets
-                {
-                    //we have to null the assetsfile here and call init later
-                    BundleReplacer replacer = new BundleReplacerFromAssets(oldName, newName, null, replacers, 0);
-                    return replacer;
-                }
+                var rep = ParseAssetReplacer(reader, prefReplacersInMemory);
+                if (rep != null)
+                    assetReplacers.Add(rep);
             }
-            else if (fileType == 1) //AssetsReplacer
+
+            return new EmipBundleEntryReplacer
             {
-                byte unknown01 = reader.ReadByte(); //always 1
-                int fileId = reader.ReadInt32();
-                long pathId = reader.ReadInt64();
-                int classId = reader.ReadInt32();
-                ushort monoScriptIndex = reader.ReadUInt16();
+                OldName = oldName,
+                NewName = newName,
+                HasSerializedData = hasSerializedData,
+                AssetReplacers = assetReplacers
+            };
+        }
 
-                List<AssetPPtr> preloadDependencies = new List<AssetPPtr>();
-                int preloadDependencyCount = reader.ReadInt32();
-                for (int i = 0; i < preloadDependencyCount; i++)
-                {
-                    AssetPPtr pptr = new AssetPPtr(reader.ReadInt32(), reader.ReadInt64());
-                    preloadDependencies.Add(pptr);
-                }
+        private static EmipAssetReplacer ParseAssetReplacer(AssetsFileReader reader, bool prefReplacersInMemory)
+        {
+            short replacerType = reader.ReadInt16();
+            byte fileType = reader.ReadByte();
+            if (fileType != 1) //not an AssetsReplacer
+                return null;
 
-                if (replacerType == 0) //remover
-                {
-                    AssetsReplacer replacer = new AssetsRemover(pathId);
-                    if (preloadDependencyCount != 0)
-                        replacer.SetPreloadDependencies(preloadDependencies);
+            byte unknown01 = reader.ReadByte(); //always 1
+            int fileId = reader.ReadInt32();
+            long pathId = reader.ReadInt64();
+            int classId = reader.ReadInt32();
+            ushort monoScriptIndex = reader.ReadUInt16();
 
-                    return replacer;
-                }
-                else if (replacerType == 2) //adder/replacer?
-                {
-                    #nullable enable
-                    Hash128? propertiesHash = null;
-                    Hash128? scriptHash = null;
-                    ClassDatabaseFile? classData = null;
-                    #nullable disable
-                    AssetsReplacer replacer;
-
-                    bool flag1 = reader.ReadByte() != 0; //no idea, couldn't get it to be 1
-                    if (flag1)
-                    {
-                        throw new NotSupportedException("you just found a file with the mysterious flag1 set, send the file to nes");
-                    }
-
-                    bool flag2 = reader.ReadByte() != 0; //has properties hash
-                    if (flag2)
-                    {
-                        propertiesHash = new Hash128(reader);
-                    }
-
-                    bool flag3 = reader.ReadByte() != 0; //has script hash
-                    if (flag3)
-                    {
-                        scriptHash = new Hash128(reader);
-                    }
-
-                    bool flag4 = reader.ReadByte() != 0; //has cldb
-                    if (flag4)
-                    {
-                        classData = new ClassDatabaseFile();
-                        classData.Read(reader);
-                    }
-
-                    long bufLength = reader.ReadInt64();
-                    if (prefReplacersInMemory)
-                    {
-                        byte[] buf = reader.ReadBytes((int)bufLength);
-                        replacer = new AssetsReplacerFromMemory(pathId, classId, monoScriptIndex, buf);
-                    }
-                    else
-                    {
-                        replacer = new AssetsReplacerFromStream(pathId, classId, monoScriptIndex, reader.BaseStream, reader.Position, bufLength);
-                        reader.Position += bufLength;
-                    }
-
-                    if (propertiesHash != null)
-                        replacer.SetPropertiesHash(propertiesHash.Value);
-                    if (scriptHash != null)
-                        replacer.SetScriptIDHash(scriptHash.Value);
-                    if (scriptHash != null)
-                        replacer.SetTypeInfo(classData, null, false); //idk what the last two are supposed to do
-                    if (preloadDependencyCount != 0)
-                        replacer.SetPreloadDependencies(preloadDependencies);
-
-                    return replacer;
-                }
+            int preloadDependencyCount = reader.ReadInt32();
+            for (int i = 0; i < preloadDependencyCount; i++)
+            {
+                reader.ReadInt32(); // fileId
+                reader.ReadInt64(); // pathId
             }
+
+            if (replacerType == 0) //remover
+            {
+                return new EmipAssetReplacer
+                {
+                    IsRemover = true,
+                    PathId = pathId,
+                    ClassId = classId,
+                    MonoScriptIndex = monoScriptIndex
+                };
+            }
+            else if (replacerType == 2) //adder/replacer
+            {
+                bool flag1 = reader.ReadByte() != 0;
+                if (flag1)
+                {
+                    throw new NotSupportedException("you just found a file with the mysterious flag1 set, send the file to nes");
+                }
+
+                bool flag2 = reader.ReadByte() != 0; //has properties hash
+                if (flag2)
+                {
+                    reader.ReadBytes(16); // Hash128 - read and discard
+                }
+
+                bool flag3 = reader.ReadByte() != 0; //has script hash
+                if (flag3)
+                {
+                    reader.ReadBytes(16); // Hash128 - read and discard
+                }
+
+                bool flag4 = reader.ReadByte() != 0; //has cldb
+                if (flag4)
+                {
+                    var classData = new ClassDatabaseFile();
+                    classData.Read(reader); // read to advance stream position
+                }
+
+                long bufLength = reader.ReadInt64();
+                byte[] buf;
+                if (prefReplacersInMemory)
+                {
+                    buf = reader.ReadBytes((int)bufLength);
+                }
+                else
+                {
+                    buf = reader.ReadBytes((int)bufLength);
+                }
+
+                return new EmipAssetReplacer
+                {
+                    IsRemover = false,
+                    PathId = pathId,
+                    ClassId = classId,
+                    MonoScriptIndex = monoScriptIndex,
+                    Data = buf
+                };
+            }
+
             return null;
         }
     }
@@ -225,6 +212,7 @@ namespace ItzulTool
     {
         public bool isBundle;
         public string path;
-        public List<object> replacers;
+        public List<EmipBundleEntryReplacer> bundleReplacers; // used when isBundle
+        public List<EmipAssetReplacer> assetReplacers;        // used when !isBundle
     }
 }

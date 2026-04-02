@@ -100,7 +100,7 @@ namespace ItzulTool
             using (FileStream fs = File.Open(tempPath, FileMode.Create))
             using (AssetsFileWriter w = new AssetsFileWriter(fs))
             {
-                bundleInst.file.Pack(bundleInst.file.Reader, w, compType, true, progress);
+                bundleInst.file.Pack(w, compType, true, progress);
             }
 
             am.UnloadAll(true);
@@ -164,26 +164,28 @@ namespace ItzulTool
 
                     Console.WriteLine($"{affectedFileName} deskonprimatzen...");
                     AssetBundleFile bun = DecompressBundle(affectedFilePath);
-                    List<BundleReplacer> reps = new List<BundleReplacer>();
 
-                    foreach (var rep in affectedFile.replacers)
+                    foreach (var bunRep in affectedFile.bundleReplacers)
                     {
-                        var bunRep = (BundleReplacer)rep;
-                        if (bunRep is BundleReplacerFromAssets)
+                        var dirInfo = BundleHelper.GetDirInfo(bun, bunRep.OldName);
+                        AssetsFile assetsFile = BundleHelper.LoadAssetFromBundle(bun, bunRep.OldName);
+
+                        foreach (var assetRep in bunRep.AssetReplacers)
                         {
-                            //read in assets files from the bundle for replacers that need them
-                            string assetName = bunRep.GetOriginalEntryName();
-                            var bunRepInf = BundleHelper.GetDirInfo(bun, assetName);
-                            long pos = bunRepInf.Offset;
-                            bunRep.Init(bun.DataReader, pos, bunRepInf.DecompressedSize);
+                            var assetInfo = assetsFile.GetAssetInfo(assetRep.PathId);
+                            if (assetRep.IsRemover)
+                                assetInfo.SetRemoved();
+                            else
+                                assetInfo.SetNewData(assetRep.Data);
                         }
-                        reps.Add(bunRep);
+
+                        dirInfo.Replacer = new ContentReplacerFromAssets(assetsFile);
                     }
 
                     Console.WriteLine($"{modFile} idazten...");
                     FileStream mfs = File.Open(modFile, FileMode.Create);
                     AssetsFileWriter mw = new AssetsFileWriter(mfs);
-                    bun.Write(mw, reps, instPkg.addedTypes); //addedTypes does nothing atm
+                    bun.Write(mw);
                     
                     mfs.Close();
                     bun.Close();
@@ -206,18 +208,19 @@ namespace ItzulTool
                     AssetsFileReader ar = new AssetsFileReader(afs);
                     AssetsFile assets = new AssetsFile();
                     assets.Read(ar);
-                    List<AssetsReplacer> reps = new List<AssetsReplacer>();
-
-                    foreach (var rep in affectedFile.replacers)
+                    foreach (var assetRep in affectedFile.assetReplacers)
                     {
-                        var assetsReplacer = (AssetsReplacer)rep;
-                        reps.Add(assetsReplacer);
+                        var assetInfo = assets.GetAssetInfo(assetRep.PathId);
+                        if (assetRep.IsRemover)
+                            assetInfo.SetRemoved();
+                        else
+                            assetInfo.SetNewData(assetRep.Data);
                     }
 
                     Console.WriteLine($"{modFile} idazten...");
                     FileStream mfs = File.Open(modFile, FileMode.Create);
                     AssetsFileWriter mw = new AssetsFileWriter(mfs);
-                    assets.Write(mw, 0, reps, instPkg.addedTypes);
+                    assets.Write(mw, 0);
 
                     mfs.Close();
                     ar.Close();
@@ -248,7 +251,7 @@ namespace ItzulTool
 
             Console.WriteLine("Esportatzeko direktorioa:" + exportDirectory);
 
-            int entryCount = bun.BlockAndDirInfo.DirectoryInfos.Length;
+            int entryCount = bun.BlockAndDirInfo.DirectoryInfos.Count;
             for (int i = 0; i < entryCount; i++)
             {
                 string name = bun.BlockAndDirInfo.DirectoryInfos[i].Name;
@@ -278,19 +281,18 @@ namespace ItzulTool
             var bundleInst = am.LoadBundleFile(bundle, false);
             AssetBundleFile bun = bundleInst.file;
 
-            List<BundleReplacer> reps = new List<BundleReplacer>();
             List<Stream> streams = new List<Stream>();
 
-            int entryCount = bun.BlockAndDirInfo.DirectoryInfos.Length;
+            int entryCount = bun.BlockAndDirInfo.DirectoryInfos.Count;
             for (int i = 0; i < entryCount; i++)
             {
                 string name = bun.BlockAndDirInfo.DirectoryInfos[i].Name;
-                
+
                 if (name.Equals(assetsFileName))
                 {
                     FileStream fs = File.OpenRead(assetsFile);
                     long length = fs.Length;
-                    reps.Add(new BundleReplacerFromStream(name, name, true, fs, 0, length));
+                    bun.BlockAndDirInfo.DirectoryInfos[i].Replacer = new ContentReplacerFromStream(fs, 0, (int)length);
                     streams.Add(fs);
                     Console.WriteLine($"{name} inportatzen...");
                 }
@@ -300,7 +302,7 @@ namespace ItzulTool
             using (MemoryStream ms = new MemoryStream())
             using (AssetsFileWriter w = new AssetsFileWriter(ms))
             {
-                bun.Write(w, reps);
+                bun.Write(w);
                 data = ms.ToArray();
             }
             Console.WriteLine($"{bundle} bundleari aldaketak aplikatzen...");

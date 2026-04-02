@@ -30,6 +30,9 @@ namespace ItzulTool
             Console.WriteLine("EMIPa aplikatzeko: itzultool-sdk applyemip <emip fitxategia> <direktorioa>");
             Console.WriteLine("Bundle batetik assets fitxategi bat erauzteko: itzultool-sdk extractassets <bundlea> <asseta>");
             Console.WriteLine("Bundle bateko assets fitxategi bat ordezkatzeko: itzultool-sdk replaceassets <bundlea> <asset berria bide-izenarekin> (bundlea konprimatua bazegoen, komando honek deskonprimatu egingo du)");
+#if SDK
+            Console.WriteLine("Assets fitxategi batetik baliabide bat JSON formatuan erauzteko: itzultool-sdk extractasjson <assets fitxategia> <baliabidearen izena>");
+#endif
             Console.WriteLine("");
         }
 
@@ -320,6 +323,99 @@ namespace ItzulTool
 
 
 #if SDK
+        private static void ExtractAssetAsJson(string[] args)
+        {
+            var assetsFilePath = args[1];
+            var assetName = args[2];
+
+            Console.WriteLine($"{assetName} baliabidea JSON formatuan erauzten...");
+
+            var am = new AssetsManager();
+            using var tpkStream = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("ItzulTool.ReleaseFiles.classdata.tpk");
+            if (tpkStream == null)
+            {
+                Console.Error.WriteLine("Errorea: classdata.tpk ez da aurkitu exekutagarriaren barruan.");
+                return;
+            }
+            am.LoadClassPackage(tpkStream);
+
+            var assetsInst = am.LoadAssetsFile(assetsFilePath, false);
+
+            string unityVersion = assetsInst.file.Metadata.UnityVersion;
+            var cldb = am.LoadClassDatabaseFromPackage(unityVersion);
+            if (cldb == null)
+            {
+                Console.Error.WriteLine($"Errorea: '{unityVersion}' bertsioarentzako klaseen datu-basea ez da classdata.tpk-n aurkitu.");
+                return;
+            }
+
+            foreach (var assetInfo in assetsInst.file.AssetInfos)
+            {
+                AssetTypeValueField baseField;
+                try { baseField = am.GetBaseField(assetsInst, assetInfo); }
+                catch { continue; }
+
+                if (baseField == null) continue;
+
+                var nameField = baseField["m_Name"];
+                if (nameField.IsDummy || nameField.AsString != assetName) continue;
+
+                JToken jToken = FieldToJToken(baseField);
+                string json = jToken.ToString(Formatting.Indented);
+
+                string outputPath = assetName + ".json";
+                File.WriteAllText(outputPath, json);
+                Console.WriteLine($"{outputPath} idatzia.");
+                return;
+            }
+
+            Console.WriteLine($"Ez da '{assetName}' izeneko baliabiderik aurkitu.");
+        }
+
+        private static JToken FieldToJToken(AssetTypeValueField field)
+        {
+            if (field.Value != null)
+            {
+                switch (field.Value.ValueType)
+                {
+                    case AssetValueType.String: return new JValue(field.AsString);
+                    case AssetValueType.Bool: return new JValue(field.AsBool);
+                    case AssetValueType.Int8:
+                    case AssetValueType.Int16:
+                    case AssetValueType.Int32: return new JValue(field.AsInt);
+                    case AssetValueType.UInt8:
+                    case AssetValueType.UInt16:
+                    case AssetValueType.UInt32: return new JValue((long)(uint)field.AsInt);
+                    case AssetValueType.Int64: return new JValue(field.AsLong);
+                    case AssetValueType.UInt64: return new JValue(field.AsULong);
+                    case AssetValueType.Float: return new JValue(field.AsFloat);
+                    case AssetValueType.Double: return new JValue(field.AsDouble);
+                    case AssetValueType.ByteArray: return new JValue(Convert.ToBase64String(field.AsByteArray));
+                    case AssetValueType.Array:
+                    {
+                        var arr = new JArray();
+                        foreach (var child in field.Children)
+                            arr.Add(FieldToJToken(child));
+                        return arr;
+                    }
+                }
+            }
+
+            if (field.TemplateField.IsArray)
+            {
+                var arr = new JArray();
+                foreach (var child in field.Children)
+                    arr.Add(FieldToJToken(child));
+                return arr;
+            }
+
+            var obj = new JObject();
+            foreach (var child in field.Children)
+                obj[child.FieldName] = FieldToJToken(child);
+            return obj;
+        }
+
         private static void ConvertJsonToCsv(string[] args)
         {
 
@@ -462,6 +558,10 @@ namespace ItzulTool
                 ReplaceAssetsFileInBundle(args);
             }
 #if SDK
+            else if (command == "extractasjson")
+            {
+                ExtractAssetAsJson(args);
+            }
             else if (command == "jsontocsv")
             {
                 ConvertJsonToCsv(args);

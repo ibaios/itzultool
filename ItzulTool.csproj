@@ -18,6 +18,10 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup Condition="$(DefineConstants.Contains('SDK'))">
+    <EmbeddedResource Include="ReleaseFiles\classdata.tpk" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="CsvHelper" Version="32.0.3" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />

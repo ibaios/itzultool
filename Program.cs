@@ -1,8 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Globalization;
 using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json.Nodes;
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
+using CsvHelper;
+using CsvHelper.Configuration;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace ItzulTool
 {
@@ -16,17 +25,18 @@ namespace ItzulTool
             Console.WriteLine("");
             Console.WriteLine("Aukerak:");
             Console.WriteLine("");
-            Console.WriteLine("Deskonprimatzeko: ItzulTool decompress <fitxategia> (deskonprimatutako fitxategiak jatorrizkoaren izen bera izango du, bukaeran '.decomp' luzapena gehituta)");
-            Console.WriteLine("Konprimatzeko: ItzulTool compress <jatorriko fitxategia> <helburuko fitxategia>");
-            Console.WriteLine("EMIPa aplikatzeko: ItzulTool applyemip <emip fitxategia> <direktorioa>");
-            Console.WriteLine("Bundle batetik assets fitxategi bat erauzteko: ItzulTool extractassets <bundlea> <asseta>");
-            Console.WriteLine("Bundle bateko assets fitxategi bat ordezkatzeko: ItzulTool replaceassets <bundlea> <asset berria bide-izenarekin>");
+            Console.WriteLine("Deskonprimatzeko: itzultool-sdk decompress <fitxategia>");
+            Console.WriteLine("Konprimatzeko: itzultool-sdk compress <fitxategia>");
+            Console.WriteLine("EMIPa aplikatzeko: itzultool-sdk applyemip <emip fitxategia> <direktorioa>");
+            Console.WriteLine("Bundle batetik assets fitxategi bat erauzteko: itzultool-sdk extractassets <bundlea> <asseta>");
+            Console.WriteLine("Bundle bateko assets fitxategi bat ordezkatzeko: itzultool-sdk replaceassets <bundlea> <asset berria bide-izenarekin> (bundlea konprimatua bazegoen, komando honek deskonprimatu egingo du)");
             Console.WriteLine("");
         }
 
-        private static AssetBundleFile DecompressBundle(string file, string decompFile)
+        private static AssetBundleFile DecompressBundle(string file)
         {
             AssetBundleFile bun = new AssetBundleFile();
+            var tempPath = file + ".tmp";
 
             Stream fs = File.OpenRead(file);
             AssetsFileReader r = new AssetsFileReader(fs);
@@ -34,25 +44,20 @@ namespace ItzulTool
             bun.Read(r);
             if (bun.Header.GetCompressionType() != 0)
             {
-                Stream nfs;
-                if (decompFile == null)
-                    nfs = new MemoryStream();
-                else
-                    nfs = File.Open(decompFile, FileMode.Create, FileAccess.ReadWrite);
+                using (Stream nfs = File.Open(tempPath, FileMode.Create, FileAccess.ReadWrite))
+                {
+                    AssetsFileWriter w = new AssetsFileWriter(nfs);
+                    bun.Unpack(w);
+                }
 
-                AssetsFileWriter w = new AssetsFileWriter(nfs);
-                bun.Unpack(w);
-
-                nfs.Position = 0;
                 fs.Close();
+                File.Move(tempPath, file, overwrite: true);
 
-                fs = nfs;
+                fs = File.OpenRead(file);
                 r = new AssetsFileReader(fs);
 
                 bun = new AssetBundleFile();
                 bun.Read(r);
-            } else {
-                System.IO.File.Copy(file, decompFile);
             }
 
             return bun;
@@ -84,19 +89,22 @@ namespace ItzulTool
             return flags;
         }
 
-        private static void CompressBundle(string file, string destFile) {
+        private static void CompressBundle(string file) {
             var am = new AssetsManager();
             var bundleInst = am.LoadBundleFile(file, false);
-            var path = destFile;
             var compType = AssetBundleCompressionType.LZ4;
+            var tempPath = file + ".tmp";
 
             var progress = new CommandLineProgressBar();
 
-            using (FileStream fs = File.Open(path, FileMode.Create))
+            using (FileStream fs = File.Open(tempPath, FileMode.Create))
             using (AssetsFileWriter w = new AssetsFileWriter(fs))
             {
                 bundleInst.file.Pack(bundleInst.file.Reader, w, compType, true, progress);
             }
+
+            am.UnloadAll(true);
+            File.Move(tempPath, file, overwrite: true);
         }
 
         private static void Decompress(string[] args)
@@ -104,7 +112,8 @@ namespace ItzulTool
             Console.WriteLine("Deskonprimatzen...");
 
             var file = args[1];
-            DecompressBundle(file, $"{file}.decomp");
+
+            DecompressBundle(file);
 
             Console.WriteLine("Deskonprimatuta.");
         }
@@ -114,8 +123,7 @@ namespace ItzulTool
             Console.WriteLine("Konprimatzen...");
 
             var file = args[1];
-            var destFile = args[2];
-            CompressBundle(file, destFile);
+            CompressBundle(file);
 
             Console.WriteLine("Konprimatuta.");
         }
@@ -148,18 +156,14 @@ namespace ItzulTool
 
                 if (affectedFile.isBundle)
                 {
-                    string decompFile = $"{affectedFilePath}.decomp";
                     string modFile = $"{affectedFilePath}.mod";
                     string bakFile = GetNextBackup(affectedFilePath);
 
                     if (bakFile == null)
                         return;
 
-                    if (flags.Contains("-md"))
-                        decompFile = null;
-
-                    Console.WriteLine($"{affectedFileName} deskonprimatzen, helburua: {decompFile??"memoria"}...");
-                    AssetBundleFile bun = DecompressBundle(affectedFilePath, decompFile);
+                    Console.WriteLine($"{affectedFileName} deskonprimatzen...");
+                    AssetBundleFile bun = DecompressBundle(affectedFilePath);
                     List<BundleReplacer> reps = new List<BundleReplacer>();
 
                     foreach (var rep in affectedFile.replacers)
@@ -188,9 +192,6 @@ namespace ItzulTool
                     File.Move(affectedFilePath, bakFile);
                     File.Move(modFile, affectedFilePath);
                     
-                    if (!flags.Contains("-kd") && !flags.Contains("-md") && File.Exists(decompFile))
-                        File.Delete(decompFile);
-
                     Console.WriteLine($"Eginda.");
                 }
                 else //isAssetsFile
@@ -315,7 +316,118 @@ namespace ItzulTool
 
         }
 
-        
+
+#if SDK
+        private static void ConvertJsonToCsv(string[] args)
+        {
+
+            var jsonFile = args[1];
+            var csvFile = args[2];
+            string termsPath = args.Length > 3 ? args[3] : "mSource/mTerms/Array";
+            string termIdPath = args.Length > 4 ? args[4] : "Term";
+            string termLanguagesPath = args.Length > 5 ? args[5] : "Languages/Array";
+
+            Console.WriteLine($"{jsonFile} JSON fitxategia CSVra bihurtzen...");
+
+            string jsonContent = File.ReadAllText(@jsonFile);
+
+            string csvContent = jsonToCsv(jsonContent, termsPath, termIdPath, termLanguagesPath);
+
+            byte[] bytes = Encoding.UTF8.GetBytes(csvContent);
+            File.WriteAllBytes(csvFile, bytes);
+
+            Console.WriteLine("Eginda.");
+
+        }
+
+        private static string jsonToCsv(string jsonContent, string termsPath, string termIdPath, string termLanguagesPath)
+        {
+            StringWriter csvString = new StringWriter();
+            using (var csv = new CsvWriter(csvString, CultureInfo.InvariantCulture))
+            {
+                JObject json = JObject.Parse(jsonContent);
+                JArray a = (JArray) getTokenFromPath(json, termsPath);
+
+                foreach(JObject t in a) {
+                    string term =  getTokenFromPath(t, termIdPath).ToString();
+                    csv.WriteField(term);
+                    //string line = "\"" + term + "\",";
+                    JArray translations = (JArray) getTokenFromPath(t, termLanguagesPath);
+                    foreach(JValue l in translations) {
+                        //line += "\"" + l.ToString() + "\",";
+                        csv.WriteField(l.ToString());
+                    }
+                    csv.NextRecord();
+                }
+            }
+            return csvString.ToString();
+        }
+
+        private static void UpdateJsonFromCsv(string[] args)
+        {
+
+            var jsonFile = args[1];
+            var newJsonFile = jsonFile + ".new";
+            var csvFile = args[2];
+            string termsPath = args.Length > 3 ? args[3] : "mSource/mTerms/Array";
+            string termIdPath = args.Length > 4 ? args[4] : "Term";
+            string termLanguagesPath = args.Length > 5 ? args[5] : "Languages/Array";
+            int languageIndex = args.Length > 6 ? Int32.Parse(args[6]) : -1;
+
+            var replacements = new Dictionary<string, string>();
+
+            Console.WriteLine($"{jsonFile} JSON fitxategia eguneratzen CSVko balioekin...");
+
+            string jsonContent = File.ReadAllText(@jsonFile);
+
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture) { Delimiter = ",", HasHeaderRecord = false };
+            using (var reader = new StreamReader(@csvFile))
+            using (var csv = new CsvReader(reader , config))
+            {
+                while(csv.Read()) {
+                    string id = csv.GetField(0);
+                    string value = csv.GetField(languageIndex + 1);
+                    replacements[id] = value;
+
+                }
+            }
+
+            var updatedJsonContent = updateJson(jsonContent, replacements, termsPath, termIdPath, termLanguagesPath, languageIndex);
+            byte[] bytes = Encoding.UTF8.GetBytes(updatedJsonContent);
+            File.WriteAllBytes(newJsonFile, bytes);
+
+            Console.WriteLine("Eginda.");
+
+        }
+
+        static string updateJson(string jsonContent, Dictionary<string, string> replacements, string termsPath, string termIdPath, string termLanguagesPath, int languagesIndex) {
+
+            JObject json = JObject.Parse(jsonContent);
+            JArray arr = (JArray) getTokenFromPath(json, termsPath);
+
+            foreach(JObject row in arr.Children<JObject>()) {
+                string id = getTokenFromPath(row, termIdPath).ToString();
+                if(replacements.ContainsKey(id)) {
+                    string val = replacements[id];
+                    JArray translations = (JArray) getTokenFromPath(row, termLanguagesPath);
+                    translations[languagesIndex] = val;
+                }
+            }
+            
+            return json.ToString();
+        }
+
+        static JToken getTokenFromPath(JObject json, string termsPath) {
+            string[] tp = termsPath.Split("/");
+            JToken aux = json;
+            foreach(string key in tp) {
+                aux = aux[key];
+            }
+            return aux;
+        }
+#endif
+
+
         static void Main(string[] args)
         {
 
@@ -347,6 +459,16 @@ namespace ItzulTool
             {
                 ReplaceAssetsFileInBundle(args);
             }
+#if SDK
+            else if (command == "jsontocsv")
+            {
+                ConvertJsonToCsv(args);
+            }
+            else if (command == "updatejsonfromcsv")
+            {
+                UpdateJsonFromCsv(args);
+            }
+#endif
 
 
             

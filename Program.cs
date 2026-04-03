@@ -31,7 +31,7 @@ namespace ItzulTool
             Console.WriteLine("Bundle batetik assets fitxategi bat erauzteko: itzultool-sdk extractassets <bundlea> <asseta>");
             Console.WriteLine("Bundle bateko assets fitxategi bat ordezkatzeko: itzultool-sdk replaceassets <bundlea> <asset berria bide-izenarekin> (bundlea konprimatua bazegoen, komando honek deskonprimatu egingo du)");
 #if SDK
-            Console.WriteLine("Assets fitxategi batetik baliabide bat JSON formatuan erauzteko: itzultool-sdk extractasjson <assets fitxategia> <baliabidearen izena>");
+            Console.WriteLine("Assets fitxategi batetik baliabide bat JSON formatuan erauzteko: itzultool-sdk exportdump <assets fitxategia> <baliabidearen izena>");
 #endif
             Console.WriteLine("");
         }
@@ -323,12 +323,12 @@ namespace ItzulTool
 
 
 #if SDK
-        private static void ExtractAssetAsJson(string[] args)
+        private static void ExportDumpAsJson(string[] args)
         {
             var assetsFilePath = args[1];
             var assetName = args[2];
 
-            Console.WriteLine($"{assetName} baliabidea JSON formatuan erauzten...");
+            Console.WriteLine($"{assetName} baliabidea JSON formatuan esportatzen...");
 
             var am = new AssetsManager();
             using var tpkStream = System.Reflection.Assembly.GetExecutingAssembly()
@@ -558,9 +558,9 @@ namespace ItzulTool
                 ReplaceAssetsFileInBundle(args);
             }
 #if SDK
-            else if (command == "extractasjson")
+            else if (command == "exportdump")
             {
-                ExtractAssetAsJson(args);
+                ExportDumpAsJson(args);
             }
             else if (command == "jsontocsv")
             {
